@@ -68,18 +68,15 @@ impl Function {
         }
     }
 
-    pub fn create_import_with_address(
-        binary_hash: &str,
-        library: &str,
-        name: &str,
-        address: &str,
-    ) -> Self {
+    pub fn create_import(library: &str, name: &str) -> Self {
         let lib_normalized = library.to_lowercase();
         Self {
-            uid: format!("imp:{binary_hash}:{lib_normalized}:{name}"),
+            // Global UID for imported APIs, shared across binaries.
+            uid: format!("imp:{lib_normalized}:{name}"),
             name: name.to_string(),
             r#type: FunctionType::Import,
-            address: Some(address.to_string()),
+            // Import address is binary-specific; store it on the Binary-[:CONTAINS] edge instead.
+            address: None,
             size: None,
         }
     }
@@ -91,20 +88,43 @@ pub struct StringNode {
     pub value: String,
     /// Unique identifier of the string, generated based on content hash
     pub uid: String,
-    /// Address where the string is located in the binary
-    pub address: Option<String>,
 }
 
 impl StringNode {
-    pub fn new(binary_hash: &str, value: String, address: Option<String>) -> Self {
-        let content_hash = uid::generate_string_uid(&value);
-        let uid = format!("str:{}:{}", binary_hash, content_hash);
+    pub fn new(value: String) -> Self {
+        // Reduce duplicates caused by extractor variations (e.g. trailing NUL).
+        let normalized_value = value.trim_end_matches('\0').to_string();
+        let uid = uid::generate_string_uid(&normalized_value);
         Self {
-            value,
+            value: normalized_value,
             uid,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StringOccurrence {
+    /// UID of the referenced String node
+    pub string_uid: String,
+    /// Address where the string is located in the binary (hexadecimal format)
+    pub address: Option<String>,
+}
+
+impl StringOccurrence {
+    pub fn new(string_uid: String, address: Option<String>) -> Self {
+        Self {
+            string_uid,
             address,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StringSearchHit {
+    pub uid: String,
+    pub value: String,
+    pub score: f64,
+    pub sample_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

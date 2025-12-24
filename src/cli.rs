@@ -66,6 +66,21 @@ pub enum QueryType {
         #[arg(long, default_value = "table")]
         format: String,
     },
+    /// Query strings (fulltext search)
+    Strings {
+        /// Search text (auto converted to a Lucene wildcard query unless --raw is set)
+        #[arg(long, default_value = "")]
+        pattern: String,
+        #[arg(long)]
+        binary: Option<String>,
+        #[arg(long, default_value = "100")]
+        limit: usize,
+        /// Treat pattern as a raw Lucene query
+        #[arg(long)]
+        raw: bool,
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
     /// Query binary information
     Binary {
         #[arg(long)]

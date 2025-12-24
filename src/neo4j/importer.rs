@@ -3,7 +3,7 @@ use neo4rs::query;
 use serde::{Deserialize, Serialize};
 
 use super::Neo4jConnection;
-use crate::models::{Binary, Function, Library, StringNode};
+use crate::models::{Binary, Function, Library, StringNode, StringSearchHit};
 
 #[derive(Debug, Clone)]
 pub struct ImportStatistics {
@@ -191,8 +191,7 @@ impl GraphImporter {
     pub async fn import_string_node(&self, string_node: &StringNode) -> Result<()> {
         let query_str = "
             MERGE (s:String {uid: $uid})
-            SET s.value = $value,
-                s.address = $address
+            SET s.value = $value
         ";
 
         self.connection
@@ -200,8 +199,31 @@ impl GraphImporter {
             .run(
                 query(query_str)
                     .param("uid", string_node.uid.as_str())
-                    .param("value", string_node.value.as_str())
-                    .param("address", string_node.address.as_deref().unwrap_or("")),
+                    .param("value", string_node.value.as_str()),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn create_contains_string_relationship(
+        &self,
+        binary_hash: &str,
+        string_uid: &str,
+        address: Option<&str>,
+    ) -> Result<()> {
+        let query_str = "
+            MATCH (b:Binary {hash: $binary_hash}), (s:String {uid: $string_uid})
+            MERGE (b)-[r:CONTAINS_STRING {address: $address}]->(s)
+        ";
+
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("binary_hash", binary_hash)
+                    .param("string_uid", string_uid)
+                    .param("address", address.unwrap_or("")),
             )
             .await?;
 
@@ -228,7 +250,7 @@ impl GraphImporter {
     ) -> Result<()> {
         let query_str = "
             MATCH (b:Binary {hash: $binary_hash}), (l:Library {name: $library_name})
-            MERGE (b)-[:IMPORTS]->(l)
+            MERGE (b)-[:IMPORTS_LIBRARY]->(l)
         ";
 
         self.connection
@@ -237,6 +259,31 @@ impl GraphImporter {
                 query(query_str)
                     .param("binary_hash", binary_hash)
                     .param("library_name", library_name),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn create_imports_function_relationship_with_address(
+        &self,
+        binary_hash: &str,
+        function_uid: &str,
+        address: &str,
+    ) -> Result<()> {
+        let query_str = "
+            MATCH (b:Binary {hash: $binary_hash}), (f:Function {uid: $function_uid})
+            MERGE (b)-[r:IMPORTS]->(f)
+            SET r.address = $address
+        ";
+
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("binary_hash", binary_hash)
+                    .param("function_uid", function_uid)
+                    .param("address", address),
             )
             .await?;
 
@@ -279,7 +326,7 @@ impl GraphImporter {
     ) -> Result<Vec<Function>> {
         let query_str = if let Some(_binary_name) = binary {
             "
-            MATCH (b:Binary)-[:CONTAINS]->(f:Function)
+            MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)
             WHERE (f.name CONTAINS $pattern OR f.uid CONTAINS $pattern)
               AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
             RETURN f
@@ -326,6 +373,59 @@ impl GraphImporter {
         }
 
         Ok(functions)
+    }
+
+    pub async fn query_strings_fulltext(
+        &self,
+        lucene_query: &str,
+        binary: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<StringSearchHit>> {
+        let query_str = if let Some(_binary_name) = binary {
+            "
+            CALL db.index.fulltext.queryNodes('string_value_fulltext', $query) YIELD node, score
+            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
+            WHERE (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+            RETURN node AS s, score AS score, count(DISTINCT b) AS sample_count
+            ORDER BY score DESC
+            LIMIT $limit
+        "
+        } else {
+            "
+            CALL db.index.fulltext.queryNodes('string_value_fulltext', $query) YIELD node, score
+            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
+            RETURN node AS s, score AS score, count(DISTINCT b) AS sample_count
+            ORDER BY score DESC
+            LIMIT $limit
+        "
+        };
+
+        let mut query_builder = query(query_str)
+            .param("query", lucene_query)
+            .param("limit", limit as i64);
+        if let Some(binary_name) = binary {
+            query_builder = query_builder.param("binary_name", binary_name);
+        }
+
+        let mut result = self.connection.graph().execute(query_builder).await?;
+        let mut hits = Vec::new();
+
+        while let Some(row) = result.next().await? {
+            let node = row.get::<neo4rs::Node>("s")?;
+            let uid = node.get::<String>("uid").unwrap_or_default();
+            let value = node.get::<String>("value").unwrap_or_default();
+            let score = row.get::<f64>("score").unwrap_or(0.0);
+            let sample_count = row.get::<i64>("sample_count").unwrap_or(0);
+
+            hits.push(StringSearchHit {
+                uid,
+                value,
+                score,
+                sample_count,
+            });
+        }
+
+        Ok(hits)
     }
 
     pub async fn query_binary_info(&self, binary_name: &str) -> Result<Option<Binary>> {
@@ -376,9 +476,10 @@ impl GraphImporter {
     ) -> Result<CallGraph> {
         let callees_query = if let Some(_binary_name) = binary {
             format!(
-                "MATCH (b:Binary)-[:CONTAINS]->(f:Function)-[:CALLS*1..{}]->(callee:Function)
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)-[:CALLS*1..{}]->(callee:Function)
                  WHERE (f.name = $function_name OR f.uid = $function_name)
                    AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(callee))
                  RETURN DISTINCT callee",
                 max_depth
             )
@@ -411,9 +512,10 @@ impl GraphImporter {
 
         let callers_query = if let Some(_binary_name) = binary {
             format!(
-                "MATCH (b:Binary)-[:CONTAINS]->(f:Function)<-[:CALLS*1..{}]-(caller:Function)
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)<-[:CALLS*1..{}]-(caller:Function)
                  WHERE (f.name = $function_name OR f.uid = $function_name)
                    AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(caller))
                  RETURN DISTINCT caller",
                 max_depth
             )
@@ -450,10 +552,21 @@ impl GraphImporter {
     pub async fn query_xrefs(&self, address: &str, binary: Option<&str>) -> Result<Vec<Xref>> {
         let query_str = if let Some(_binary_name) = binary {
             "
-            MATCH (b:Binary)-[:CONTAINS]->(from:Function)-[r:CALLS]->(to:Function)
-            WHERE (from.address = $address OR to.address = $address)
-              AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
-            RETURN from.name as from_function, to.name as to_function, r.offset as offset
+            CALL {
+                MATCH (b:Binary)
+                WHERE (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                MATCH (b)-[:CONTAINS|IMPORTS]->(from:Function)-[r:CALLS]->(to:Function)
+                WHERE (from.address = $address OR to.address = $address)
+                RETURN from.name as from_function, to.name as to_function, r.offset as offset
+                UNION
+                MATCH (b:Binary)
+                WHERE (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                MATCH (b)-[:CONTAINS|IMPORTS]->(from:Function)-[r:CALLS]->(to:Function)
+                MATCH (b)-[imp:IMPORTS]->(to:Function)
+                WHERE imp.address = $address
+                RETURN from.name as from_function, to.name as to_function, r.offset as offset
+            }
+            RETURN DISTINCT from_function, to_function, offset
         "
         } else {
             "
