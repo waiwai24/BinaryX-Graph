@@ -20,20 +20,38 @@ impl CallPathAnalyzer {
     pub async fn query_call_paths(
         &self,
         function_name: &str,
+        binary: Option<&str>,
         max_depth: usize,
     ) -> Result<Vec<CallPath>> {
         let mut paths = Vec::new();
 
-        let query = Query::new(format!(
-            "MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
-             WHERE start.name = $function_name OR start.uid = $function_name
-             RETURN path, length(path) as path_length,
-                    [node in nodes(path) | node.name] as node_names,
-                    [node in nodes(path) | node.address] as node_addresses,
-                    [rel in relationships(path) | rel.offset] as call_offsets",
-            max_depth
-        ))
-        .param("function_name", function_name.to_string());
+        let mut query = if let Some(binary_name) = binary {
+            Query::new(format!(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(start:Function)
+                 MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
+                 WHERE (start.name = $function_name OR start.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND ALL(n IN nodes(path) WHERE EXISTS((b)-[:CONTAINS|IMPORTS]->(n)))
+                 RETURN path, length(path) as path_length,
+                        [node in nodes(path) | node.name] as node_names,
+                        [node in nodes(path) | node.address] as node_addresses,
+                        [rel in relationships(path) | rel.offset] as call_offsets",
+                max_depth
+            ))
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(format!(
+                "MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
+                 WHERE start.name = $function_name OR start.uid = $function_name
+                 RETURN path, length(path) as path_length,
+                        [node in nodes(path) | node.name] as node_names,
+                        [node in nodes(path) | node.address] as node_addresses,
+                        [rel in relationships(path) | rel.offset] as call_offsets",
+                max_depth
+            ))
+        };
+
+        query = query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(query).await?;
         let mut path_counter = 0;
@@ -94,17 +112,31 @@ impl CallPathAnalyzer {
     pub async fn query_enhanced_call_graph(
         &self,
         function_name: &str,
+        binary: Option<&str>,
         max_depth: usize,
     ) -> Result<EnhancedCallGraph> {
         let mut enhanced_graph = EnhancedCallGraph::new();
 
-        let basic_query = Query::new(format!(
-            "MATCH (f:Function)-[:CALLS*1..{}]->(callee:Function)
-             WHERE f.name = $function_name OR f.uid = $function_name
-             RETURN DISTINCT callee",
-            max_depth
-        ))
-        .param("function_name", function_name.to_string());
+        let mut basic_query = if let Some(binary_name) = binary {
+            Query::new(format!(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)-[:CALLS*1..{}]->(callee:Function)
+                 WHERE (f.name = $function_name OR f.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(callee))
+                 RETURN DISTINCT callee",
+                max_depth
+            ))
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(format!(
+                "MATCH (f:Function)-[:CALLS*1..{}]->(callee:Function)
+                 WHERE f.name = $function_name OR f.uid = $function_name
+                 RETURN DISTINCT callee",
+                max_depth
+            ))
+        };
+
+        basic_query = basic_query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(basic_query).await?;
 
@@ -118,18 +150,33 @@ impl CallPathAnalyzer {
             }
         }
 
-        let call_paths = self.query_call_paths(function_name, max_depth).await?;
+        let call_paths = self
+            .query_call_paths(function_name, binary, max_depth)
+            .await?;
         for path in call_paths {
             enhanced_graph.add_call_path(path);
         }
 
-        let frequency_query = Query::new(
-            "MATCH (caller:Function)-[:CALLS]->(callee:Function)
-             WHERE caller.name = $function_name OR caller.uid = $function_name
-             RETURN callee.name as callee_name, count(*) as frequency"
-                .to_string(),
-        )
-        .param("function_name", function_name.to_string());
+        let mut frequency_query = if let Some(binary_name) = binary {
+            Query::new(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(caller:Function)-[:CALLS]->(callee:Function)
+                 WHERE (caller.name = $function_name OR caller.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(callee))
+                 RETURN callee.name as callee_name, count(*) as frequency"
+                    .to_string(),
+            )
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(
+                "MATCH (caller:Function)-[:CALLS]->(callee:Function)
+                 WHERE caller.name = $function_name OR caller.uid = $function_name
+                 RETURN callee.name as callee_name, count(*) as frequency"
+                    .to_string(),
+            )
+        };
+
+        frequency_query = frequency_query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(frequency_query).await?;
 
@@ -146,18 +193,36 @@ impl CallPathAnalyzer {
     }
 
     /// Query call sequences (with order information)
-    pub async fn query_call_sequences(&self, function_name: &str) -> Result<Vec<CallSequence>> {
+    pub async fn query_call_sequences(
+        &self,
+        function_name: &str,
+        binary: Option<&str>,
+    ) -> Result<Vec<CallSequence>> {
         let mut sequences = Vec::new();
 
         // Query call sequences within the function
-        let query = Query::new(
-            "MATCH (f:Function)-[r:CALLS]->(callee:Function)
-             WHERE f.name = $function_name OR f.uid = $function_name
-             RETURN f.name as caller, callee.name as callee, r.offset as call_site
-             ORDER BY r.offset"
-                .to_string(),
-        )
-        .param("function_name", function_name.to_string());
+        let mut query = if let Some(binary_name) = binary {
+            Query::new(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)-[r:CALLS]->(callee:Function)
+                 WHERE (f.name = $function_name OR f.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(callee))
+                 RETURN f.name as caller, callee.name as callee, r.offset as call_site
+                 ORDER BY r.offset"
+                    .to_string(),
+            )
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(
+                "MATCH (f:Function)-[r:CALLS]->(callee:Function)
+                 WHERE f.name = $function_name OR f.uid = $function_name
+                 RETURN f.name as caller, callee.name as callee, r.offset as call_site
+                 ORDER BY r.offset"
+                    .to_string(),
+            )
+        };
+
+        query = query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(query).await?;
         let mut order_counter = 0;
@@ -185,16 +250,32 @@ impl CallPathAnalyzer {
         Ok(sequences)
     }
 
-    pub async fn find_recursive_calls(&self, function_name: &str) -> Result<Vec<RecursiveCall>> {
+    pub async fn find_recursive_calls(
+        &self,
+        function_name: &str,
+        binary: Option<&str>,
+    ) -> Result<Vec<RecursiveCall>> {
         let mut recursive_calls = Vec::new();
 
-        let direct_query = Query::new(
-            "MATCH (f:Function)-[:CALLS]->(f)
-             WHERE f.name = $function_name OR f.uid = $function_name
-             RETURN f.name as function_name, f.address as address"
-                .to_string(),
-        )
-        .param("function_name", function_name.to_string());
+        let mut direct_query = if let Some(binary_name) = binary {
+            Query::new(
+                "MATCH (b:Binary)-[:CONTAINS]->(f:Function)-[:CALLS]->(f)
+                 WHERE (f.name = $function_name OR f.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                 RETURN f.name as function_name, f.address as address"
+                    .to_string(),
+            )
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(
+                "MATCH (f:Function)-[:CALLS]->(f)
+                 WHERE f.name = $function_name OR f.uid = $function_name
+                 RETURN f.name as function_name, f.address as address"
+                    .to_string(),
+            )
+        };
+
+        direct_query = direct_query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(direct_query).await?;
 
@@ -208,14 +289,29 @@ impl CallPathAnalyzer {
             }
         }
 
-        let indirect_query = Query::new(
-            "MATCH path = (f:Function)-[:CALLS*2..10]->(f)
-             WHERE f.name = $function_name OR f.uid = $function_name
-             RETURN length(path) as depth, f.name as function_name, f.address as address,
-                    [node in nodes(path) | node.name] as path_nodes"
-                .to_string(),
-        )
-        .param("function_name", function_name.to_string());
+        let mut indirect_query = if let Some(binary_name) = binary {
+            Query::new(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(f:Function)
+                 MATCH path = (f:Function)-[:CALLS*2..10]->(f)
+                 WHERE (f.name = $function_name OR f.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND ALL(n IN nodes(path) WHERE EXISTS((b)-[:CONTAINS|IMPORTS]->(n)))
+                 RETURN length(path) as depth, f.name as function_name, f.address as address,
+                        [node in nodes(path) | node.name] as path_nodes"
+                    .to_string(),
+            )
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(
+                "MATCH path = (f:Function)-[:CALLS*2..10]->(f)
+                 WHERE f.name = $function_name OR f.uid = $function_name
+                 RETURN length(path) as depth, f.name as function_name, f.address as address,
+                        [node in nodes(path) | node.name] as path_nodes"
+                    .to_string(),
+            )
+        };
+
+        indirect_query = indirect_query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(indirect_query).await?;
 
@@ -238,22 +334,41 @@ impl CallPathAnalyzer {
     pub async fn query_upward_call_chain(
         &self,
         function_name: &str,
+        binary: Option<&str>,
         max_depth: usize,
     ) -> Result<Vec<UpwardCallChain>> {
         let mut chains = Vec::new();
 
         // Query all call paths pointing to the target function
-        let query = Query::new(format!(
-            "MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
-             WHERE end.name = $function_name OR end.uid = $function_name
-             RETURN path, length(path) as path_length,
-                    [node in nodes(path) | node.name] as node_names,
-                    [node in nodes(path) | node.address] as node_addresses,
-                    [rel in relationships(path) | rel.offset] as call_offsets
-             ORDER BY path_length",
-            max_depth
-        ))
-        .param("function_name", function_name.to_string());
+        let mut query = if let Some(binary_name) = binary {
+            Query::new(format!(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(end:Function)
+                 MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
+                 WHERE (end.name = $function_name OR end.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND ALL(n IN nodes(path) WHERE EXISTS((b)-[:CONTAINS|IMPORTS]->(n)))
+                 RETURN path, length(path) as path_length,
+                        [node in nodes(path) | node.name] as node_names,
+                        [node in nodes(path) | node.address] as node_addresses,
+                        [rel in relationships(path) | rel.offset] as call_offsets
+                 ORDER BY path_length",
+                max_depth
+            ))
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(format!(
+                "MATCH path = (start:Function)-[:CALLS*1..{}]->(end:Function)
+                 WHERE end.name = $function_name OR end.uid = $function_name
+                 RETURN path, length(path) as path_length,
+                        [node in nodes(path) | node.name] as node_names,
+                        [node in nodes(path) | node.address] as node_addresses,
+                        [rel in relationships(path) | rel.offset] as call_offsets
+                 ORDER BY path_length",
+                max_depth
+            ))
+        };
+
+        query = query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(query).await?;
         let mut chain_counter = 0;
@@ -315,19 +430,38 @@ impl CallPathAnalyzer {
     }
 
     /// Query caller sequences (who called who, in call order)
-    pub async fn query_caller_sequences(&self, function_name: &str) -> Result<Vec<CallerSequence>> {
+    pub async fn query_caller_sequences(
+        &self,
+        function_name: &str,
+        binary: Option<&str>,
+    ) -> Result<Vec<CallerSequence>> {
         let mut sequences = Vec::new();
 
         // Query all functions that call the target function
-        let query = Query::new(
-            "MATCH (caller:Function)-[r:CALLS]->(callee:Function)
-             WHERE callee.name = $function_name OR callee.uid = $function_name
-             RETURN caller.name as caller_name, caller.address as caller_address, 
-                    r.offset as call_site, callee.name as callee_name, callee.address as callee_address
-             ORDER BY r.offset"
-                .to_string(),
-        )
-        .param("function_name", function_name.to_string());
+        let mut query = if let Some(binary_name) = binary {
+            Query::new(
+                "MATCH (b:Binary)-[:CONTAINS|IMPORTS]->(caller:Function)-[r:CALLS]->(callee:Function)
+                 WHERE (callee.name = $function_name OR callee.uid = $function_name)
+                   AND (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+                   AND EXISTS((b)-[:CONTAINS|IMPORTS]->(callee))
+                 RETURN caller.name as caller_name, caller.address as caller_address, 
+                        r.offset as call_site, callee.name as callee_name, callee.address as callee_address
+                 ORDER BY r.offset"
+                    .to_string(),
+            )
+            .param("binary_name", binary_name.to_string())
+        } else {
+            Query::new(
+                "MATCH (caller:Function)-[r:CALLS]->(callee:Function)
+                 WHERE callee.name = $function_name OR callee.uid = $function_name
+                 RETURN caller.name as caller_name, caller.address as caller_address, 
+                        r.offset as call_site, callee.name as callee_name, callee.address as callee_address
+                 ORDER BY r.offset"
+                    .to_string(),
+            )
+        };
+
+        query = query.param("function_name", function_name.to_string());
 
         let mut result = self.connection.graph().execute(query).await?;
         let mut order_counter = 0;
@@ -369,13 +503,16 @@ impl CallPathAnalyzer {
     pub async fn analyze_call_context(
         &self,
         function_name: &str,
+        binary: Option<&str>,
         max_depth: usize,
     ) -> Result<CallContextAnalysis> {
         let upward_chains = self
-            .query_upward_call_chain(function_name, max_depth)
+            .query_upward_call_chain(function_name, binary, max_depth)
             .await?;
-        let downward_paths = self.query_call_paths(function_name, max_depth).await?;
-        let caller_sequences = self.query_caller_sequences(function_name).await?;
+        let downward_paths = self
+            .query_call_paths(function_name, binary, max_depth)
+            .await?;
+        let caller_sequences = self.query_caller_sequences(function_name, binary).await?;
 
         let mut analysis = CallContextAnalysis::new(function_name.to_string());
 

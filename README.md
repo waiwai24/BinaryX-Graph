@@ -4,6 +4,7 @@ Cross-binary analysis data importer written in Rust, focused on importing pre-an
 
 ## Features
 
+- **Fulltext Search**: Built-in Lucene-based fulltext index for fast substring/keyword search in strings
 - **Neo4j Integration**: Native neo4rs driver for direct Neo4j database connection
 - **Modern CLI**: Command-line interface based on clap with multiple output formats
 - **Flexible Configuration**: JSON configuration file support
@@ -50,16 +51,6 @@ Create configuration file `config.json`:
   - Larger batches may improve processing speed but increase memory usage
   - Recommended values: 100-5000, adjust based on file size and system memory
 
-> **⚠️ Important Notice:**
->
-> Neo4j Community Edition only supports a single database and does not support creating multiple databases. Only Enterprise Edition and Aura support multi-database functionality.
->
-> - **Community Edition users**: Recommend setting `neo4j_database` to `null` or `"neo4j"` (default database name)
-> - **Enterprise Edition/Aura users**: Can use custom database names, but need to create the database in Neo4j first:
->   ```cypher
->   CREATE DATABASE binary_analysis
->   ```
-
 ### Basic Usage
 
 #### 1. Initialize Database
@@ -90,6 +81,15 @@ Create configuration file `config.json`:
 ```bash
 # Query functions from all binaries
 ./binaryx -c config.json query functions --pattern "main"
+
+# Fulltext search strings (keyword/substring search with auto wildcard)
+./binaryx -c config.json query strings --pattern "Pay Bitcoin"
+
+# Fulltext search with raw Lucene query syntax
+./binaryx -c config.json query strings --pattern "ransom* AND (bitcoin OR wallet)" --raw
+
+# Search strings in a specific binary
+./binaryx -c config.json query strings --pattern "password" --binary "malware.exe"
 
 # Query functions from a specific binary
 ./binaryx -c config.json query functions --pattern "main" --binary "sample.exe"
@@ -190,50 +190,36 @@ BinaryX-Graph fully supports the import and analysis of multiple binary files. E
 
 ### UID Format Description
 
-To ensure no conflicts during multi-binary import, the system uses the following UID format:
+To support cross-binary de-duplication and shared analysis, the system uses the following **global deduplication UID format**:
 
-| Node Type           | UID Format                             | Example                                 |
-| ------------------- | -------------------------------------- | --------------------------------------- |
-| Binary              | `{sha256}`                           | `abc123...def`                        |
-| Function (Internal) | `{binary_hash}:{address}`            | `abc123:0x401000`                     |
-| Function (Import)   | `imp:{binary_hash}:{library}:{name}` | `imp:abc123:kernel32.dll:CreateFileA` |
-| Function (Export)   | `{binary_hash}:{address}`            | `abc123:0x401000`                     |
-| String              | `str:{binary_hash}:{content_hash}`   | `str:abc123:xyz789`                   |
-| Library             | `{name_lowercase}`                   | `kernel32.dll`                        |
+| Node Type           | UID Format                             | Example                                 | Scope           |
+| ------------------- | -------------------------------------- | --------------------------------------- | --------------- |
+| Binary              | `{sha256}`                             | `abc123...def`                          | Per-binary      |
+| Function (Internal) | `{binary_hash}:{address}`              | `abc123:0x401000`                       | Per-binary      |
+| Function (Import)   | `imp:{library}:{name}`                 | `imp:kernel32:createfilea`              | Global          |
+| Function (Export)   | `{binary_hash}:{address}`              | `abc123:0x401000`                       | Per-binary      |
+| String              | `str:{SHA256(content)}`                | `str:185f8db3227...`                    | Global          |
+| Library             | `{name_lowercase}`                     | `kernel32`                              | Global          |
 
 ### Relationship Description
 
 | Relationship Type | From     | To       | Properties        | Description                                    |
 | ----------------- | -------- | -------- | ----------------- | ---------------------------------------------- |
-| CONTAINS          | Binary   | Function | -                 | Functions contained in the binary file         |
-| IMPORTS           | Binary   | Library  | -                 | Libraries imported by the binary file          |
+| CONTAINS          | Binary   | Function | -                 | Functions contained in the binary file (internal/export) |
+| IMPORTS           | Binary   | Function | address           | Imported APIs referenced by the binary file    |
+| IMPORTS_LIBRARY   | Binary   | Library  | -                 | Libraries imported by the binary file          |
 | BELONGS_TO        | Function | Library  | -                 | Library to which the imported function belongs |
 | CALLS             | Function | Function | offset, call_type | Function call relationships                    |
+| CONTAINS_STRING   | Binary   | String   | address           | Strings referenced by the binary file          |
 
 **Multi-Binary Advantages:**
 
 - Functions with the same name from different binaries do not conflict
-- Cross-binary analysis of shared library usage is supported
+- Cross-sample analysis: Instant queries like "which malware uses this API/string"
+- Malware clustering: Group samples by shared API calls and string signatures
 - Comparative analysis of different binary versions is supported
 - Track dependencies through Binary-IMPORTS->Library relationships
-- **Support filtering queries for specific binaries using the `--binary` parameter**
-
-### Multi-Binary Query Examples
-
-```bash
-# Scenario 1: Query main functions from all binaries (may return multiple results)
-./binaryx -c config.json query functions --pattern "main"
-
-# Scenario 2: Query main functions only from sample.exe
-./binaryx -c config.json query functions --pattern "main" --binary "sample.exe"
-
-# Scenario 3: Compare call graph differences between two versions
-./binaryx -c config.json query callgraph WinMain --binary "app_v1.exe" > v1.json
-./binaryx -c config.json query callgraph WinMain --binary "app_v2.exe" > v2.json
-
-# Scenario 4: View all library functions imported by a specific binary
-./binaryx -c config.json query functions --pattern "CreateFile" --binary "malware.exe"
-```
+- Support filtering queries for specific binaries using the `--binary` parameter
 
 ## Data Format
 

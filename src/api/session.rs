@@ -93,21 +93,41 @@ impl ImportSession {
         }
 
         if let Some(strings_data) = data.get("strings") {
-            match self.parse_strings(strings_data, &binary_hash) {
-                Ok(string_nodes) => {
+            match self.parse_strings(strings_data) {
+                Ok(parsed_strings) => {
                     let mut unique_strings: HashMap<String, StringNode> = HashMap::new();
-                    for string_node in string_nodes {
+                    let mut occurrences: Vec<StringOccurrence> =
+                        Vec::with_capacity(parsed_strings.len());
+
+                    for (string_node, occurrence) in parsed_strings {
                         unique_strings
                             .entry(string_node.uid.clone())
                             .or_insert(string_node);
+                        occurrences.push(occurrence);
                     }
 
-                    let unique_count = unique_strings.len();
-                    stats.strings += unique_count as i64;
+                    stats.strings += unique_strings.len() as i64;
 
                     for string_node in unique_strings.values() {
                         if let Err(e) = self.importer.import_string_node(string_node).await {
                             errors.push(format!("Failed to import string: {}", e));
+                        }
+                    }
+
+                    for occurrence in occurrences {
+                        if let Err(e) = self
+                            .importer
+                            .create_contains_string_relationship(
+                                &binary_hash,
+                                &occurrence.string_uid,
+                                occurrence.address.as_deref(),
+                            )
+                            .await
+                        {
+                            errors.push(format!(
+                                "Failed to create CONTAINS_STRING relationship: {}",
+                                e
+                            ));
                         }
                     }
                 }
@@ -126,7 +146,7 @@ impl ImportSession {
                         if let Err(e) = self.importer.import_library(library).await {
                             errors.push(format!("Failed to import library: {}", e));
                         }
-                        // Create Binary-IMPORTS->Library relationship
+                        // Create Binary-IMPORTS_LIBRARY->Library relationship
                         if let Err(e) = self
                             .importer
                             .create_imports_relationship(&binary_hash, &library.name)
@@ -138,12 +158,10 @@ impl ImportSession {
 
                     for import in &imports {
                         let lib_name_lower = import.library.to_lowercase();
-                        let function = Function::create_import_with_address(
-                            &binary_hash,
-                            &lib_name_lower,
-                            &import.name,
-                            &import.address,
-                        );
+                        let function = Function::create_import(&lib_name_lower, &import.name);
+
+                        let import_address_normalized = normalize_address(&import.address)
+                            .unwrap_or_else(|| import.address.clone());
 
                         if let Some(normalized) = normalize_address(&import.address) {
                             address_to_uid.insert(normalized, function.uid.clone());
@@ -159,6 +177,20 @@ impl ImportSession {
                             .await
                         {
                             errors.push(format!("Failed to create BELONGS_TO relationship: {}", e));
+                        }
+                        if let Err(e) = self
+                            .importer
+                            .create_imports_function_relationship_with_address(
+                                &binary_hash,
+                                &function.uid,
+                                &import_address_normalized,
+                            )
+                            .await
+                        {
+                            errors.push(format!(
+                                "Failed to create IMPORTS relationship for import: {}",
+                                e
+                            ));
                         }
                     }
                 }
@@ -317,12 +349,12 @@ impl ImportSession {
         Ok(functions)
     }
 
-    fn parse_strings(&self, strings_data: &Value, binary_hash: &str) -> Result<Vec<StringNode>> {
+    fn parse_strings(&self, strings_data: &Value) -> Result<Vec<(StringNode, StringOccurrence)>> {
         let strings_array = strings_data
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("strings must be an array"))?;
 
-        let mut string_nodes = Vec::with_capacity(strings_array.len());
+        let mut parsed = Vec::with_capacity(strings_array.len());
 
         for string_data in strings_array {
             let value = if let Some(v) = string_data.get("value").and_then(|v| v.as_str()) {
@@ -336,13 +368,14 @@ impl ImportSession {
             let address = string_data
                 .get("address")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(|s| normalize_address(s).unwrap_or_else(|| s.to_string()));
 
-            let string_node = StringNode::new(binary_hash, value.to_string(), address);
-            string_nodes.push(string_node);
+            let string_node = StringNode::new(value.to_string());
+            let occurrence = StringOccurrence::new(string_node.uid.clone(), address);
+            parsed.push((string_node, occurrence));
         }
 
-        Ok(string_nodes)
+        Ok(parsed)
     }
 
     fn parse_imports(&self, imports_data: &Value) -> Result<(Vec<Library>, Vec<Import>)> {
@@ -504,6 +537,17 @@ impl ImportSession {
 
     pub async fn query_xrefs(&self, address: &str, binary: Option<&str>) -> Result<Vec<Xref>> {
         self.importer.query_xrefs(address, binary).await
+    }
+
+    pub async fn query_strings_fulltext(
+        &self,
+        lucene_query: &str,
+        binary: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::models::StringSearchHit>> {
+        self.importer
+            .query_strings_fulltext(lucene_query, binary, limit)
+            .await
     }
 
     pub fn importer(&self) -> &crate::neo4j::GraphImporter {

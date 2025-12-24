@@ -47,6 +47,8 @@ impl SchemaManager {
             "CREATE INDEX binary_filename_index IF NOT EXISTS FOR (b:Binary) ON (b.filename)",
             // String indexes
             "CREATE INDEX string_value_index IF NOT EXISTS FOR (s:String) ON (s.value)",
+            // Fulltext indexes (for substring/keyword search)
+            "CREATE FULLTEXT INDEX string_value_fulltext IF NOT EXISTS FOR (s:String) ON EACH [s.value]",
         ];
 
         for index in indexes {

@@ -28,6 +28,13 @@ pub async fn handle_query(query_type: QueryType, config: Config) -> Result<()> {
             limit,
             format,
         } => query_functions(&session, &pattern, binary.as_deref(), limit, &format).await?,
+        QueryType::Strings {
+            pattern,
+            binary,
+            limit,
+            raw,
+            format,
+        } => query_strings(&session, &pattern, raw, binary.as_deref(), limit, &format).await?,
         QueryType::Binary {
             binary_name,
             format,
@@ -88,6 +95,46 @@ pub async fn handle_query(query_type: QueryType, config: Config) -> Result<()> {
     Ok(())
 }
 
+fn escape_lucene_term(term: &str) -> String {
+    let mut escaped = String::with_capacity(term.len());
+    for ch in term.chars() {
+        match ch {
+            '+' | '-' | '&' | '|' | '!' | '(' | ')' | '{' | '}' | '[' | ']' | '^' | '"' | '~'
+            | '*' | '?' | ':' | '\\' | '/' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn default_string_fulltext_query(pattern: &str) -> String {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return "*".to_string();
+    }
+
+    let parts: Vec<String> = pattern
+        .split_whitespace()
+        .filter(|p| !p.is_empty())
+        .map(escape_lucene_term)
+        .collect();
+
+    if parts.is_empty() {
+        "*".to_string()
+    } else if parts.len() == 1 {
+        format!("*{}*", parts[0])
+    } else {
+        parts
+            .into_iter()
+            .map(|p| format!("*{}*", p))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
 async fn query_functions(
     session: &crate::api::ImportSession,
     pattern: &str,
@@ -124,7 +171,7 @@ async fn query_functions(
         println!("{}", "-".repeat(110));
 
         for f in &functions {
-            let binary_display = extract_binary_from_uid(&f.uid);
+            let binary_display = binary.unwrap_or_else(|| extract_binary_from_uid(&f.uid));
             println!(
                 "{:<40} {:<20} {:<15} {:<20} {:<15}",
                 f.name,
@@ -139,7 +186,69 @@ async fn query_functions(
     Ok(())
 }
 
+async fn query_strings(
+    session: &crate::api::ImportSession,
+    pattern: &str,
+    raw: bool,
+    binary: Option<&str>,
+    limit: usize,
+    format: &str,
+) -> Result<()> {
+    if let Some(binary_name) = binary {
+        println!(
+            "Querying strings with pattern: '{}' in binary: '{}'",
+            pattern, binary_name
+        );
+    } else {
+        println!("Querying strings with pattern: '{}'", pattern);
+    }
+
+    let lucene_query = if raw {
+        pattern.to_string()
+    } else {
+        default_string_fulltext_query(pattern)
+    };
+
+    let hits = session
+        .query_strings_fulltext(&lucene_query, binary, limit)
+        .await?;
+
+    if hits.is_empty() {
+        println!("No strings found matching pattern: '{}'", pattern);
+        return Ok(());
+    }
+
+    if format == "json" {
+        let json = serde_json::to_string_pretty(&hits)?;
+        println!("{}", json);
+    } else {
+        println!("\nStrings ({} found):", hits.len());
+        println!("{:<10} {:<10} {}", "Score", "Samples", "Value");
+        println!("{}", "-".repeat(80));
+
+        for hit in &hits {
+            let value = hit.value.replace('\n', "\\n").replace('\r', "\\r");
+            let display = if value.len() > 60 {
+                format!("{}...", &value[..60])
+            } else {
+                value
+            };
+            println!("{:<10.4} {:<10} {}", hit.score, hit.sample_count, display);
+        }
+
+        if !raw {
+            println!("\nLucene query used: {}", lucene_query);
+            println!("Tip: use `--raw` to pass an exact Lucene query (e.g. `\\\"Pay Bitcoin\\\"` or `*bitcoin*`).");
+        }
+    }
+
+    Ok(())
+}
+
 fn extract_binary_from_uid(uid: &str) -> &str {
+    if uid.starts_with("imp:") {
+        return "shared";
+    }
     if let Some(colon_pos) = uid.find(':') {
         &uid[..colon_pos.min(15)]
     } else {
@@ -324,7 +433,7 @@ async fn query_call_paths(
     if config.show_paths || show_all {
         println!("\nAnalyzing call paths...");
         let call_paths = analyzer
-            .query_call_paths(function_name, config.max_depth)
+            .query_call_paths(function_name, config.binary, config.max_depth)
             .await?;
 
         if call_paths.is_empty() {
@@ -379,7 +488,9 @@ async fn query_call_paths(
 
     if config.show_sequences || show_all {
         println!("\nAnalyzing call sequences...");
-        let sequences = analyzer.query_call_sequences(function_name).await?;
+        let sequences = analyzer
+            .query_call_sequences(function_name, config.binary)
+            .await?;
 
         if sequences.is_empty() {
             println!("No call sequences found");
@@ -396,7 +507,9 @@ async fn query_call_paths(
 
     if config.show_recursive || show_all {
         println!("\nChecking recursive calls...");
-        let recursive_calls = analyzer.find_recursive_calls(function_name).await?;
+        let recursive_calls = analyzer
+            .find_recursive_calls(function_name, config.binary)
+            .await?;
 
         if recursive_calls.is_empty() {
             println!("No recursive calls found");
@@ -424,7 +537,7 @@ async fn query_call_paths(
     if config.show_upward || show_all {
         println!("\nAnalyzing upward call chains...");
         let upward_chains = analyzer
-            .query_upward_call_chain(function_name, config.max_depth)
+            .query_upward_call_chain(function_name, config.binary, config.max_depth)
             .await?;
 
         if upward_chains.is_empty() {
@@ -486,7 +599,9 @@ async fn query_call_paths(
                 );
             }
 
-            let caller_sequences = analyzer.query_caller_sequences(function_name).await?;
+            let caller_sequences = analyzer
+                .query_caller_sequences(function_name, config.binary)
+                .await?;
             if !caller_sequences.is_empty() {
                 println!("\nWho calls '{}':", function_name);
                 for sequence in &caller_sequences {
@@ -505,7 +620,7 @@ async fn query_call_paths(
     if config.show_context || show_all {
         println!("\nFull call context analysis...");
         let context_analysis = analyzer
-            .analyze_call_context(function_name, config.max_depth)
+            .analyze_call_context(function_name, config.binary, config.max_depth)
             .await?;
 
         println!("Call context insights:");
@@ -516,7 +631,7 @@ async fn query_call_paths(
 
     if config.format == "json" {
         let enhanced_graph = analyzer
-            .query_enhanced_call_graph(function_name, config.max_depth)
+            .query_enhanced_call_graph(function_name, config.binary, config.max_depth)
             .await?;
         let json = serde_json::to_string_pretty(&enhanced_graph)?;
         println!("\nEnhanced call graph (JSON):");
