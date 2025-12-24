@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
-use crate::config::Config;
 use crate::commands;
+use crate::config::Config;
 
 #[derive(Parser)]
 pub struct Cli {

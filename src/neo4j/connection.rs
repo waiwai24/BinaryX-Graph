@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use neo4rs::{Graph, Query, ConfigBuilder};
+use neo4rs::{ConfigBuilder, Graph, Query};
 use std::sync::Arc;
 
 use super::DatabaseStats;
@@ -40,7 +40,8 @@ impl Neo4jConnection {
 
     pub async fn test_connection(&self) -> Result<()> {
         let query = Query::new("RETURN 1 as test".to_string());
-        let _ = self.graph
+        let _ = self
+            .graph
             .execute(query)
             .await
             .context("Failed to execute test query")?;
@@ -79,7 +80,11 @@ impl Neo4jConnection {
         Ok(stats)
     }
 
-    pub async fn execute_query(&self, cypher: &str, params: Option<serde_json::Value>) -> Result<Vec<serde_json::Value>> {
+    pub async fn execute_query(
+        &self,
+        cypher: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>> {
         let mut query = Query::new(cypher.to_string());
 
         if let Some(serde_json::Value::Object(map)) = params {

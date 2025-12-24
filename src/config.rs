@@ -31,10 +31,16 @@ impl Config {
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
-        let content = std::fs::read_to_string(path_ref)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path_ref.display(), e))?;
-        let config: Config = serde_json::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", path_ref.display(), e))?;
+        let content = std::fs::read_to_string(path_ref).map_err(|e| {
+            anyhow::anyhow!("Failed to read config file '{}': {}", path_ref.display(), e)
+        })?;
+        let config: Config = serde_json::from_str(&content).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse config file '{}': {}",
+                path_ref.display(),
+                e
+            )
+        })?;
 
         config.validate()?;
 

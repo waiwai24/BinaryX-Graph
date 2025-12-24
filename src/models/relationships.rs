@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainsRelationship {
@@ -13,7 +14,6 @@ pub struct CallsRelationship {
     pub call_site: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CallType {
     /// Direct function call
@@ -26,14 +26,16 @@ pub enum CallType {
     Tail,
 }
 
-impl CallType {
-    pub fn from_str(s: &str) -> Self {
+impl FromStr for CallType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "direct" => CallType::Direct,
-            "indirect" => CallType::Indirect,
-            "virtual" => CallType::Virtual,
-            "tail" => CallType::Tail,
-            _ => CallType::Direct, // Default to Direct if unknown
+            "direct" => Ok(CallType::Direct),
+            "indirect" => Ok(CallType::Indirect),
+            "virtual" => Ok(CallType::Virtual),
+            "tail" => Ok(CallType::Tail),
+            _ => Ok(CallType::Direct), // Default to Direct if unknown
         }
     }
 }
@@ -121,7 +123,6 @@ pub struct ResolvesTo {
 }
 
 impl ResolvesTo {
-
     pub fn new() -> Self {
         Self {
             rel_type: "RESOLVES_TO".to_string(),
@@ -146,8 +147,7 @@ pub struct References {
     pub ref_type: RefType,
 }
 
-impl References {
-}
+impl References {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HasString {

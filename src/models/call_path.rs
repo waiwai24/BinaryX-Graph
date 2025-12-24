@@ -1,6 +1,6 @@
+use crate::neo4j::importer::FunctionInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::neo4j::importer::FunctionInfo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallPathNode {
@@ -48,7 +48,6 @@ pub struct CallSequence {
     pub call_site: String,
 }
 
-
 impl CallPath {
     pub fn new(id: String) -> Self {
         Self {
@@ -67,7 +66,6 @@ impl CallPath {
         self.nodes.first()
     }
 }
-
 
 impl CallSequence {
     pub fn new(
@@ -225,7 +223,7 @@ impl CallContextAnalysis {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EnhancedCallGraph {
     pub callees: Vec<FunctionInfo>,
     pub call_paths: Vec<CallPath>,
@@ -234,11 +232,7 @@ pub struct EnhancedCallGraph {
 
 impl EnhancedCallGraph {
     pub fn new() -> Self {
-        Self {
-            callees: Vec::new(),
-            call_paths: Vec::new(),
-            call_frequencies: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub fn add_call_path(&mut self, path: CallPath) {

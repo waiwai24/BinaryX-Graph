@@ -1,13 +1,11 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-
 pub fn generate_string_uid(value: &str) -> String {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     format!("str:{:x}", hasher.finish())
 }
-
 
 pub fn parse_address(address_str: &str) -> Option<u64> {
     let trimmed = address_str.trim();
@@ -17,12 +15,18 @@ pub fn parse_address(address_str: &str) -> Option<u64> {
     }
 
     // Try parsing with 0x/0X prefix
-    if let Some(hex_str) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+    if let Some(hex_str) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
         return u64::from_str_radix(hex_str, 16).ok();
     }
 
     // Try parsing pure hexadecimal (a-f characters)
-    if trimmed.chars().any(|c| c.is_ascii_hexdigit() && !c.is_ascii_digit()) {
+    if trimmed
+        .chars()
+        .any(|c| c.is_ascii_hexdigit() && !c.is_ascii_digit())
+    {
         return u64::from_str_radix(trimmed, 16).ok();
     }
 
@@ -35,11 +39,9 @@ pub fn parse_address(address_str: &str) -> Option<u64> {
     u64::from_str_radix(trimmed, 16).ok()
 }
 
-
 pub fn format_address(address: u64) -> String {
     format!("0x{:x}", address)
 }
-
 
 pub fn normalize_address(address_str: &str) -> Option<String> {
     parse_address(address_str).map(format_address)

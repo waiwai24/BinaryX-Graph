@@ -1,25 +1,20 @@
 use anyhow::Result;
 use std::io::{self, Write};
 
+use crate::api::DataImporter;
 use crate::cli::DatabaseAction;
 use crate::config::Config;
-use crate::api::DataImporter;
 use crate::neo4j::SchemaManager;
 
 pub async fn handle_database(db_action: DatabaseAction, config: Config) -> Result<()> {
     match db_action {
-        DatabaseAction::Init => {
-            init_database(&config).await?
-        }
-        DatabaseAction::Clear { confirm } => {
-            clear_database(&config, confirm).await?
-        }
-        DatabaseAction::Stats => {
-            show_database_stats(&config).await?
-        }
-        DatabaseAction::Export { output_path, format } => {
-            export_database(&config, &output_path, &format).await?
-        }
+        DatabaseAction::Init => init_database(&config).await?,
+        DatabaseAction::Clear { confirm } => clear_database(&config, confirm).await?,
+        DatabaseAction::Stats => show_database_stats(&config).await?,
+        DatabaseAction::Export {
+            output_path,
+            format,
+        } => export_database(&config, &output_path, &format).await?,
     }
 
     Ok(())
@@ -29,7 +24,7 @@ async fn init_database(config: &Config) -> Result<()> {
     println!("Initializing database schema...");
 
     let connection = crate::neo4j::Neo4jConnection::new(config).await?;
-    
+
     // Test connectivity first
     println!("Testing Neo4j connectivity...");
     connection.verify_connectivity().await?;
@@ -37,7 +32,7 @@ async fn init_database(config: &Config) -> Result<()> {
 
     // Initialize schema
     SchemaManager::initialize_database(&connection).await?;
-    
+
     println!("Database schema initialized successfully");
     Ok(())
 }
@@ -46,10 +41,10 @@ async fn clear_database(config: &Config, confirm: bool) -> Result<()> {
     if !confirm {
         print!("This will delete ALL data in the database. Are you sure? [y/N]: ");
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        
+
         if !input.trim().to_lowercase().starts_with('y') {
             println!("Operation cancelled");
             return Ok(());
@@ -60,7 +55,7 @@ async fn clear_database(config: &Config, confirm: bool) -> Result<()> {
 
     let connection = crate::neo4j::Neo4jConnection::new(config).await?;
     SchemaManager::clear_database(&connection).await?;
-    
+
     println!("Database cleared successfully");
     Ok(())
 }
@@ -98,7 +93,7 @@ async fn export_database(config: &Config, output_path: &str, format: &str) -> Re
     println!("Exporting database to {} (format: {})", output_path, format);
 
     let importer = DataImporter::new(config).await?;
-    
+
     match format {
         "json" => {
             importer.export_to_json(output_path).await?;

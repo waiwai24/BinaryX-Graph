@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::utils::uid;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BinaryFormat {
@@ -53,7 +53,6 @@ pub struct Function {
 }
 
 impl Function {
-
     pub fn create_internal(binary_hash: &str, address: u64, name: &str, is_export: bool) -> Self {
         let hex_addr = format!("0x{address:x}");
         Self {
@@ -69,7 +68,12 @@ impl Function {
         }
     }
 
-    pub fn create_import_with_address(binary_hash: &str, library: &str, name: &str, address: &str) -> Self {
+    pub fn create_import_with_address(
+        binary_hash: &str,
+        library: &str,
+        name: &str,
+        address: &str,
+    ) -> Self {
         let lib_normalized = library.to_lowercase();
         Self {
             uid: format!("imp:{binary_hash}:{lib_normalized}:{name}"),
@@ -95,10 +99,12 @@ impl StringNode {
     pub fn new(binary_hash: &str, value: String, address: Option<String>) -> Self {
         let content_hash = uid::generate_string_uid(&value);
         let uid = format!("str:{}:{}", binary_hash, content_hash);
-        Self { value, uid, address }
+        Self {
+            value,
+            uid,
+            address,
+        }
     }
-
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,9 +131,7 @@ pub struct Import {
     pub library: std::string::String,
 }
 
-impl Import {
-    
-}
+impl Import {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Export {
@@ -137,6 +141,4 @@ pub struct Export {
     pub address: std::string::String,
 }
 
-impl Export {
-    
-}
+impl Export {}

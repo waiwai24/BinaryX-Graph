@@ -1,21 +1,28 @@
 use anyhow::Result;
 use std::path::Path;
 
+use crate::api::{DataImporter, ImportResult, ImportStatistics};
 use crate::cli::ImportType;
 use crate::config::Config;
-use crate::api::{DataImporter, ImportResult, ImportStatistics};
 
 pub async fn handle_import(import_type: ImportType, config: Config) -> Result<()> {
     let importer = DataImporter::new(&config).await?;
 
     match import_type {
-        ImportType::Json { file_path, batch_size: _, no_validate } => {
+        ImportType::Json {
+            file_path,
+            batch_size: _,
+            no_validate,
+        } => {
             let result = import_single_file(&importer, &file_path, !no_validate).await?;
             print_import_result(&result);
         }
-        ImportType::Directory { dir_path, pattern, batch_size, no_validate } => {
-            import_directory(&importer, &dir_path, &pattern, batch_size, !no_validate).await?
-        }
+        ImportType::Directory {
+            dir_path,
+            pattern,
+            batch_size,
+            no_validate,
+        } => import_directory(&importer, &dir_path, &pattern, batch_size, !no_validate).await?,
     }
 
     Ok(())
@@ -66,13 +73,23 @@ async fn import_single_file(
 }
 
 fn print_import_result(result: &ImportResult) {
-    println!("\nImport completed {}!", if result.success { "successfully" } else { "with errors" });
+    println!(
+        "\nImport completed {}!",
+        if result.success {
+            "successfully"
+        } else {
+            "with errors"
+        }
+    );
     println!("Statistics:");
     println!("  Binaries: {}", result.statistics.binaries);
     println!("  Functions: {}", result.statistics.functions);
     println!("  Strings: {}", result.statistics.strings);
     println!("  Libraries: {}", result.statistics.libraries);
-    println!("  Call relationships: {}", result.statistics.calls_relationships);
+    println!(
+        "  Call relationships: {}",
+        result.statistics.calls_relationships
+    );
     println!("  Total nodes: {}", result.statistics.total_nodes);
 
     if !result.errors.is_empty() {
@@ -106,9 +123,7 @@ async fn import_directory(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
-                let file_name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                 if matches_pattern(file_name, pattern) {
                     files.push(path);
@@ -141,14 +156,23 @@ async fn import_directory(
     let total_batches = batches.len();
 
     for (batch_idx, batch) in batches.iter().enumerate() {
-        println!("\n=== Processing batch {}/{} ({} files) ===",
-            batch_idx + 1, total_batches, batch.len());
+        println!(
+            "\n=== Processing batch {}/{} ({} files) ===",
+            batch_idx + 1,
+            total_batches,
+            batch.len()
+        );
 
         let batch_start_idx = batch_idx * batch_size;
 
         for (file_idx, file_path) in batch.iter().enumerate() {
             let overall_idx = batch_start_idx + file_idx + 1;
-            println!("[{}/{}] Importing {}...", overall_idx, total_files, file_path.display());
+            println!(
+                "[{}/{}] Importing {}...",
+                overall_idx,
+                total_files,
+                file_path.display()
+            );
 
             match import_single_file(importer, &file_path.to_string_lossy(), validate).await {
                 Ok(result) => {
@@ -175,8 +199,13 @@ async fn import_directory(
         }
 
         let batch_end_idx = batch_start_idx + batch.len();
-        println!("Batch {}/{} completed. Progress: {}/{} files",
-            batch_idx + 1, total_batches, batch_end_idx, total_files);
+        println!(
+            "Batch {}/{} completed. Progress: {}/{} files",
+            batch_idx + 1,
+            total_batches,
+            batch_end_idx,
+            total_files
+        );
     }
 
     println!("\nDirectory import completed!");

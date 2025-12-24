@@ -1,13 +1,12 @@
+pub mod call_path_analyzer;
 pub mod connection;
 pub mod importer;
 pub mod schema;
-pub mod call_path_analyzer;
 
-pub use connection::Neo4jConnection;
-pub use importer::{GraphImporter, CallGraph, Xref};
-pub use schema::SchemaManager;
 pub use call_path_analyzer::CallPathAnalyzer;
-
+pub use connection::Neo4jConnection;
+pub use importer::{CallGraph, GraphImporter, Xref};
+pub use schema::SchemaManager;
 
 use std::collections::HashMap;
 

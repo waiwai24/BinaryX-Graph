@@ -5,7 +5,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::neo4j::{Neo4jConnection, GraphImporter};
+use crate::neo4j::{GraphImporter, Neo4jConnection};
 
 use super::ImportSession;
 
@@ -89,7 +89,8 @@ impl DataImporter {
             strings: stats.strings as i64,
             libraries: stats.libraries as i64,
             calls_relationships: stats.calls_relationships as i64,
-            total_nodes: (stats.binaries + stats.functions + stats.strings + stats.libraries) as i64,
+            total_nodes: (stats.binaries + stats.functions + stats.strings + stats.libraries)
+                as i64,
         })
     }
 

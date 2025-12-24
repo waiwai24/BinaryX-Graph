@@ -1,10 +1,11 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::models::*;
-use crate::neo4j::{GraphImporter, CallGraph, Xref};
-use crate::utils::uid::{parse_address, normalize_address};
+use crate::neo4j::{CallGraph, GraphImporter, Xref};
+use crate::utils::uid::{normalize_address, parse_address};
 
 pub struct ImportSession {
     importer: GraphImporter,
@@ -74,8 +75,13 @@ impl ImportSession {
                         self.importer.import_functions_batch(chunk).await?;
 
                         for function in chunk {
-                            if let Err(e) = self.importer.create_contains_relationship(&binary_hash, &function.uid).await {
-                                errors.push(format!("Failed to create CONTAINS relationship: {}", e));
+                            if let Err(e) = self
+                                .importer
+                                .create_contains_relationship(&binary_hash, &function.uid)
+                                .await
+                            {
+                                errors
+                                    .push(format!("Failed to create CONTAINS relationship: {}", e));
                             }
                         }
                     }
@@ -91,7 +97,9 @@ impl ImportSession {
                 Ok(string_nodes) => {
                     let mut unique_strings: HashMap<String, StringNode> = HashMap::new();
                     for string_node in string_nodes {
-                        unique_strings.entry(string_node.uid.clone()).or_insert(string_node);
+                        unique_strings
+                            .entry(string_node.uid.clone())
+                            .or_insert(string_node);
                     }
 
                     let unique_count = unique_strings.len();
@@ -119,14 +127,23 @@ impl ImportSession {
                             errors.push(format!("Failed to import library: {}", e));
                         }
                         // Create Binary-IMPORTS->Library relationship
-                        if let Err(e) = self.importer.create_imports_relationship(&binary_hash, &library.name).await {
+                        if let Err(e) = self
+                            .importer
+                            .create_imports_relationship(&binary_hash, &library.name)
+                            .await
+                        {
                             errors.push(format!("Failed to create IMPORTS relationship: {}", e));
                         }
                     }
 
                     for import in &imports {
                         let lib_name_lower = import.library.to_lowercase();
-                        let function = Function::create_import_with_address(&binary_hash, &lib_name_lower, &import.name, &import.address);
+                        let function = Function::create_import_with_address(
+                            &binary_hash,
+                            &lib_name_lower,
+                            &import.name,
+                            &import.address,
+                        );
 
                         if let Some(normalized) = normalize_address(&import.address) {
                             address_to_uid.insert(normalized, function.uid.clone());
@@ -136,7 +153,11 @@ impl ImportSession {
                         if let Err(e) = self.importer.import_function(&function).await {
                             errors.push(format!("Failed to import function: {}", e));
                         }
-                        if let Err(e) = self.importer.create_belongs_to_relationship(&function.uid, &lib_name_lower).await {
+                        if let Err(e) = self
+                            .importer
+                            .create_belongs_to_relationship(&function.uid, &lib_name_lower)
+                            .await
+                        {
                             errors.push(format!("Failed to create BELONGS_TO relationship: {}", e));
                         }
                     }
@@ -158,7 +179,8 @@ impl ImportSession {
                                 continue;
                             }
                         };
-                        let function = Function::create_internal(&binary_hash, address, &export.name, true);
+                        let function =
+                            Function::create_internal(&binary_hash, address, &export.name, true);
 
                         if let Some(func_addr) = &function.address {
                             if !address_to_uid.contains_key(func_addr) {
@@ -181,7 +203,10 @@ impl ImportSession {
         }
 
         if let Some(calls_data) = data.get("calls") {
-            match self.import_calls_with_mapping(calls_data, &address_to_uid).await {
+            match self
+                .import_calls_with_mapping(calls_data, &address_to_uid)
+                .await
+            {
                 Ok(call_count) => {
                     stats.calls_relationships += call_count;
                 }
@@ -201,31 +226,38 @@ impl ImportSession {
     }
 
     fn parse_binary_info(&self, binary_info: &Value) -> Result<Binary> {
-        let hashes = binary_info.get("hashes")
+        let hashes = binary_info
+            .get("hashes")
             .ok_or_else(|| anyhow::anyhow!("Missing hashes"))?;
 
-        let sha256 = hashes.get("sha256")
+        let sha256 = hashes
+            .get("sha256")
             .and_then(|v| v.as_str())
             .or_else(|| hashes.get("SHA256").and_then(|v| v.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Missing sha256 hash"))?;
 
-        let filename = binary_info.get("name")
+        let filename = binary_info
+            .get("name")
             .and_then(|v| v.as_str())
             .or_else(|| binary_info.get("filename").and_then(|v| v.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Missing filename"))?;
 
-        let file_path = binary_info.get("file_path")
+        let file_path = binary_info
+            .get("file_path")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let file_size = binary_info.get("file_size")
+        let file_size = binary_info
+            .get("file_size")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
-        let file_type = binary_info.get("file_type")
+        let file_type = binary_info
+            .get("file_type")
             .ok_or_else(|| anyhow::anyhow!("Missing file_type"))?;
 
-        let format_str = file_type.get("type")
+        let format_str = file_type
+            .get("type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing file type"))?;
 
@@ -240,7 +272,8 @@ impl ImportSession {
             BinaryFormat::PE // Default fallback
         };
 
-        let arch = file_type.get("architecture")
+        let arch = file_type
+            .get("architecture")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
@@ -255,24 +288,26 @@ impl ImportSession {
     }
 
     fn parse_functions(&self, functions_data: &Value, binary_hash: &str) -> Result<Vec<Function>> {
-        let functions_array = functions_data.as_array()
+        let functions_array = functions_data
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("functions must be an array"))?;
 
         let mut functions = Vec::with_capacity(functions_array.len());
 
         for func_data in functions_array {
-            let name = func_data.get("name")
+            let name = func_data
+                .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
 
-            let address_str = func_data.get("address")
+            let address_str = func_data
+                .get("address")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0x0");
 
             let address = parse_address(address_str).unwrap_or(0);
 
-            let size = func_data.get("size")
-                .and_then(|v| v.as_u64());
+            let size = func_data.get("size").and_then(|v| v.as_u64());
 
             let mut function = Function::create_internal(binary_hash, address, name, false);
             function.size = size;
@@ -283,7 +318,8 @@ impl ImportSession {
     }
 
     fn parse_strings(&self, strings_data: &Value, binary_hash: &str) -> Result<Vec<StringNode>> {
-        let strings_array = strings_data.as_array()
+        let strings_array = strings_data
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("strings must be an array"))?;
 
         let mut string_nodes = Vec::with_capacity(strings_array.len());
@@ -297,7 +333,8 @@ impl ImportSession {
                 continue;
             };
 
-            let address = string_data.get("address")
+            let address = string_data
+                .get("address")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
@@ -309,27 +346,32 @@ impl ImportSession {
     }
 
     fn parse_imports(&self, imports_data: &Value) -> Result<(Vec<Library>, Vec<Import>)> {
-        let imports_array = imports_data.as_array()
+        let imports_array = imports_data
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("imports must be an array"))?;
 
         let mut libraries: HashMap<String, Library> = HashMap::new();
         let mut imports = Vec::with_capacity(imports_array.len());
 
         for import_data in imports_array {
-            let name = import_data.get("name")
+            let name = import_data
+                .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Import missing name"))?;
 
-            let library = import_data.get("library")
+            let library = import_data
+                .get("library")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Import missing library"))?;
 
-            let address = import_data.get("address")
+            let address = import_data
+                .get("address")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0x0");
 
             let lib_lower = library.to_lowercase();
-            libraries.entry(lib_lower.clone())
+            libraries
+                .entry(lib_lower.clone())
                 .or_insert_with(|| Library::create(&lib_lower));
 
             imports.push(Import {
@@ -344,17 +386,20 @@ impl ImportSession {
     }
 
     fn parse_exports(&self, exports_data: &Value) -> Result<Vec<Export>> {
-        let exports_array = exports_data.as_array()
+        let exports_array = exports_data
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("exports must be an array"))?;
 
         let mut exports = Vec::with_capacity(exports_array.len());
 
         for export_data in exports_array {
-            let name = export_data.get("name")
+            let name = export_data
+                .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Export missing name"))?;
 
-            let address = export_data.get("address")
+            let address = export_data
+                .get("address")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Export missing address"))?;
 
@@ -367,43 +412,57 @@ impl ImportSession {
         Ok(exports)
     }
 
-    async fn import_calls_with_mapping(&self, calls_data: &Value, address_to_uid: &HashMap<String, String>) -> Result<i64> {
-        let calls_array = calls_data.as_array()
+    async fn import_calls_with_mapping(
+        &self,
+        calls_data: &Value,
+        address_to_uid: &HashMap<String, String>,
+    ) -> Result<i64> {
+        let calls_array = calls_data
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("calls must be an array"))?;
 
         let mut call_count = 0i64;
         let mut skipped_count = 0i64;
 
         for call_data in calls_array {
-            let from_addr = call_data.get("from_address")
+            let from_addr = call_data
+                .get("from_address")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Call missing from_address"))?;
 
-            let to_addr = call_data.get("to_address")
+            let to_addr = call_data
+                .get("to_address")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Call missing to_address"))?;
 
-            let offset = call_data.get("offset")
+            let offset = call_data
+                .get("offset")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0x0");
 
-            let call_type_str = call_data.get("type")
+            let call_type_str = call_data
+                .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("direct");
 
-            let call_type = CallType::from_str(call_type_str);
+            let call_type = CallType::from_str(call_type_str).unwrap_or(CallType::Direct);
 
-            let from_normalized = normalize_address(from_addr).unwrap_or_else(|| from_addr.to_string());
+            let from_normalized =
+                normalize_address(from_addr).unwrap_or_else(|| from_addr.to_string());
             let to_normalized = normalize_address(to_addr).unwrap_or_else(|| to_addr.to_string());
 
-            let from_uid = address_to_uid.get(&from_normalized)
+            let from_uid = address_to_uid
+                .get(&from_normalized)
                 .or_else(|| address_to_uid.get(from_addr));
-            let to_uid = address_to_uid.get(&to_normalized)
+            let to_uid = address_to_uid
+                .get(&to_normalized)
                 .or_else(|| address_to_uid.get(to_addr));
 
             if let (Some(from_uid), Some(to_uid)) = (from_uid, to_uid) {
                 let calls = Calls::new(offset.to_string(), call_type);
-                self.importer.create_calls_relationship(&calls, from_uid, to_uid).await?;
+                self.importer
+                    .create_calls_relationship(&calls, from_uid, to_uid)
+                    .await?;
                 call_count += 1;
             } else {
                 skipped_count += 1;
@@ -411,13 +470,20 @@ impl ImportSession {
         }
 
         if skipped_count > 0 {
-            eprintln!("[WARN] Skipped {} call relationships due to unresolved addresses", skipped_count);
+            eprintln!(
+                "[WARN] Skipped {} call relationships due to unresolved addresses",
+                skipped_count
+            );
         }
 
         Ok(call_count)
     }
 
-    pub async fn query_functions(&self, pattern: &str, binary: Option<&str>) -> Result<Vec<Function>> {
+    pub async fn query_functions(
+        &self,
+        pattern: &str,
+        binary: Option<&str>,
+    ) -> Result<Vec<Function>> {
         self.importer.query_functions(pattern, binary).await
     }
 
@@ -425,8 +491,15 @@ impl ImportSession {
         self.importer.query_binary_info(binary_name).await
     }
 
-    pub async fn query_callgraph_with_depth(&self, function_name: &str, binary: Option<&str>, max_depth: usize) -> Result<CallGraph> {
-        self.importer.query_callgraph_with_depth(function_name, binary, max_depth).await
+    pub async fn query_callgraph_with_depth(
+        &self,
+        function_name: &str,
+        binary: Option<&str>,
+        max_depth: usize,
+    ) -> Result<CallGraph> {
+        self.importer
+            .query_callgraph_with_depth(function_name, binary, max_depth)
+            .await
     }
 
     pub async fn query_xrefs(&self, address: &str, binary: Option<&str>) -> Result<Vec<Xref>> {

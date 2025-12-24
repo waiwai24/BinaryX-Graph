@@ -3,7 +3,7 @@ use neo4rs::query;
 use serde::{Deserialize, Serialize};
 
 use super::Neo4jConnection;
-use crate::models::{Function, StringNode, Library, Binary};
+use crate::models::{Binary, Function, Library, StringNode};
 
 #[derive(Debug, Clone)]
 pub struct ImportStatistics {
@@ -21,9 +21,7 @@ pub struct GraphImporter {
 
 impl GraphImporter {
     pub fn new(connection: Neo4jConnection) -> Self {
-        Self {
-            connection,
-        }
+        Self { connection }
     }
 
     pub async fn get_statistics_async(&self) -> Result<ImportStatistics> {
@@ -44,7 +42,11 @@ impl GraphImporter {
 
         // Count functions
         let function_query = "MATCH (f:Function) RETURN count(f) as count";
-        let mut result = self.connection.graph().execute(query(function_query)).await?;
+        let mut result = self
+            .connection
+            .graph()
+            .execute(query(function_query))
+            .await?;
         if let Some(row) = result.next().await? {
             stats.functions = row.get::<i64>("count").unwrap_or(0) as usize;
         }
@@ -58,7 +60,11 @@ impl GraphImporter {
 
         // Count libraries
         let library_query = "MATCH (l:Library) RETURN count(l) as count";
-        let mut result = self.connection.graph().execute(query(library_query)).await?;
+        let mut result = self
+            .connection
+            .graph()
+            .execute(query(library_query))
+            .await?;
         if let Some(row) = result.next().await? {
             stats.libraries = row.get::<i64>("count").unwrap_or(0) as usize;
         }
@@ -89,14 +95,18 @@ impl GraphImporter {
 
         let format_str = format!("{:?}", binary.format);
 
-        self.connection.graph().run(query(query_str)
-            .param("hash", binary.hash.as_str())
-            .param("filename", binary.filename.as_str())
-            .param("file_path", binary.file_path.as_str())
-            .param("file_size", binary.file_size as i64)
-            .param("format", format_str.as_str())
-            .param("arch", binary.arch.as_str())
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("hash", binary.hash.as_str())
+                    .param("filename", binary.filename.as_str())
+                    .param("file_path", binary.file_path.as_str())
+                    .param("file_size", binary.file_size as i64)
+                    .param("format", format_str.as_str())
+                    .param("arch", binary.arch.as_str()),
+            )
+            .await?;
 
         Ok(())
     }
@@ -112,13 +122,17 @@ impl GraphImporter {
 
         let type_str = format!("{:?}", function.r#type);
 
-        self.connection.graph().run(query(query_str)
-            .param("uid", function.uid.as_str())
-            .param("name", function.name.as_str())
-            .param("address", function.address.as_deref().unwrap_or(""))
-            .param("type", type_str.as_str())
-            .param("size", function.size.map(|s| s as i64).unwrap_or(-1))
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("uid", function.uid.as_str())
+                    .param("name", function.name.as_str())
+                    .param("address", function.address.as_deref().unwrap_or(""))
+                    .param("type", type_str.as_str())
+                    .param("size", function.size.map(|s| s as i64).unwrap_or(-1)),
+            )
+            .await?;
 
         Ok(())
     }
@@ -130,30 +144,46 @@ impl GraphImporter {
         Ok(())
     }
 
-    pub async fn create_contains_relationship(&self, binary_hash: &str, function_uid: &str) -> Result<()> {
+    pub async fn create_contains_relationship(
+        &self,
+        binary_hash: &str,
+        function_uid: &str,
+    ) -> Result<()> {
         let query_str = "
             MATCH (b:Binary {hash: $binary_hash}), (f:Function {uid: $function_uid})
             MERGE (b)-[:CONTAINS]->(f)
         ";
 
-        self.connection.graph().run(query(query_str)
-            .param("binary_hash", binary_hash)
-            .param("function_uid", function_uid)
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("binary_hash", binary_hash)
+                    .param("function_uid", function_uid),
+            )
+            .await?;
 
         Ok(())
     }
 
-    pub async fn create_belongs_to_relationship(&self, function_uid: &str, library_name: &str) -> Result<()> {
+    pub async fn create_belongs_to_relationship(
+        &self,
+        function_uid: &str,
+        library_name: &str,
+    ) -> Result<()> {
         let query_str = "
             MATCH (f:Function {uid: $function_uid}), (l:Library {name: $library_name})
             MERGE (f)-[:BELONGS_TO]->(l)
         ";
 
-        self.connection.graph().run(query(query_str)
-            .param("function_uid", function_uid)
-            .param("library_name", library_name)
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("function_uid", function_uid)
+                    .param("library_name", library_name),
+            )
+            .await?;
 
         Ok(())
     }
@@ -165,11 +195,15 @@ impl GraphImporter {
                 s.address = $address
         ";
 
-        self.connection.graph().run(query(query_str)
-            .param("uid", string_node.uid.as_str())
-            .param("value", string_node.value.as_str())
-            .param("address", string_node.address.as_deref().unwrap_or(""))
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("uid", string_node.uid.as_str())
+                    .param("value", string_node.value.as_str())
+                    .param("address", string_node.address.as_deref().unwrap_or("")),
+            )
+            .await?;
 
         Ok(())
     }
@@ -179,28 +213,42 @@ impl GraphImporter {
             MERGE (l:Library {name: $name})
         ";
 
-        self.connection.graph().run(query(query_str)
-            .param("name", library.name.as_str())
-        ).await?;
+        self.connection
+            .graph()
+            .run(query(query_str).param("name", library.name.as_str()))
+            .await?;
 
         Ok(())
     }
 
-    pub async fn create_imports_relationship(&self, binary_hash: &str, library_name: &str) -> Result<()> {
+    pub async fn create_imports_relationship(
+        &self,
+        binary_hash: &str,
+        library_name: &str,
+    ) -> Result<()> {
         let query_str = "
             MATCH (b:Binary {hash: $binary_hash}), (l:Library {name: $library_name})
             MERGE (b)-[:IMPORTS]->(l)
         ";
 
-        self.connection.graph().run(query(query_str)
-            .param("binary_hash", binary_hash)
-            .param("library_name", library_name)
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("binary_hash", binary_hash)
+                    .param("library_name", library_name),
+            )
+            .await?;
 
         Ok(())
     }
 
-    pub async fn create_calls_relationship(&self, calls: &crate::models::Calls, from_uid: &str, to_uid: &str) -> Result<()> {
+    pub async fn create_calls_relationship(
+        &self,
+        calls: &crate::models::Calls,
+        from_uid: &str,
+        to_uid: &str,
+    ) -> Result<()> {
         let query_str = "
             MATCH (from:Function {uid: $from_uid}), (to:Function {uid: $to_uid})
             MERGE (from)-[r:CALLS]->(to)
@@ -210,17 +258,25 @@ impl GraphImporter {
 
         let call_type_str = format!("{:?}", calls.call_type);
 
-        self.connection.graph().run(query(query_str)
-            .param("from_uid", from_uid)
-            .param("to_uid", to_uid)
-            .param("offset", calls.offset.as_str())
-            .param("call_type", call_type_str.as_str())
-        ).await?;
+        self.connection
+            .graph()
+            .run(
+                query(query_str)
+                    .param("from_uid", from_uid)
+                    .param("to_uid", to_uid)
+                    .param("offset", calls.offset.as_str())
+                    .param("call_type", call_type_str.as_str()),
+            )
+            .await?;
 
         Ok(())
     }
 
-    pub async fn query_functions(&self, pattern: &str, binary: Option<&str>) -> Result<Vec<Function>> {
+    pub async fn query_functions(
+        &self,
+        pattern: &str,
+        binary: Option<&str>,
+    ) -> Result<Vec<Function>> {
         let query_str = if let Some(_binary_name) = binary {
             "
             MATCH (b:Binary)-[:CONTAINS]->(f:Function)
@@ -248,7 +304,9 @@ impl GraphImporter {
         let mut functions = Vec::new();
         while let Some(row) = result.next().await? {
             if let Ok(node) = row.get::<neo4rs::Node>("f") {
-                let type_str = node.get::<String>("type").unwrap_or_else(|_| "Internal".to_string());
+                let type_str = node
+                    .get::<String>("type")
+                    .unwrap_or_else(|_| "Internal".to_string());
                 let r#type = match type_str.as_str() {
                     "Import" => crate::models::FunctionType::Import,
                     "Export" => crate::models::FunctionType::Export,
@@ -278,13 +336,17 @@ impl GraphImporter {
             LIMIT 1
         ";
 
-        let mut result = self.connection.graph().execute(
-            query(query_str).param("binary_name", binary_name)
-        ).await?;
+        let mut result = self
+            .connection
+            .graph()
+            .execute(query(query_str).param("binary_name", binary_name))
+            .await?;
 
         if let Some(row) = result.next().await? {
             if let Ok(node) = row.get::<neo4rs::Node>("b") {
-                let format_str = node.get::<String>("format").unwrap_or_else(|_| "PE".to_string());
+                let format_str = node
+                    .get::<String>("format")
+                    .unwrap_or_else(|_| "PE".to_string());
                 let format = match format_str.as_str() {
                     "Elf" => crate::models::BinaryFormat::Elf,
                     "MachO" => crate::models::BinaryFormat::MachO,
@@ -306,7 +368,12 @@ impl GraphImporter {
         Ok(None)
     }
 
-    pub async fn query_callgraph_with_depth(&self, function_name: &str, binary: Option<&str>, max_depth: usize) -> Result<CallGraph> {
+    pub async fn query_callgraph_with_depth(
+        &self,
+        function_name: &str,
+        binary: Option<&str>,
+        max_depth: usize,
+    ) -> Result<CallGraph> {
         let callees_query = if let Some(_binary_name) = binary {
             format!(
                 "MATCH (b:Binary)-[:CONTAINS]->(f:Function)-[:CALLS*1..{}]->(callee:Function)

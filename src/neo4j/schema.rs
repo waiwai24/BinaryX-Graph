@@ -1,6 +1,5 @@
-use anyhow::Result;
 use super::Neo4jConnection;
-
+use anyhow::Result;
 
 pub struct SchemaManager {
     connection: Neo4jConnection,
@@ -73,5 +72,3 @@ impl SchemaManager {
         connection.clear_all().await
     }
 }
-
-
