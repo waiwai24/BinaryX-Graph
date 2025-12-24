@@ -103,6 +103,10 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: write
+      issues: write
 
     steps:
     - uses: actions/checkout@v4
