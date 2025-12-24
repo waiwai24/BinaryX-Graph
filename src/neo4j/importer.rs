@@ -381,28 +381,50 @@ impl GraphImporter {
         binary: Option<&str>,
         limit: usize,
     ) -> Result<Vec<StringSearchHit>> {
+        let binary_limit = 5usize;
         let query_str = if let Some(_binary_name) = binary {
             "
             CALL db.index.fulltext.queryNodes('string_value_fulltext', $query) YIELD node, score
-            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
-            WHERE (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
-            RETURN node AS s, score AS score, count(DISTINCT b) AS sample_count
+            WITH node, score
             ORDER BY score DESC
             LIMIT $limit
+            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
+            WHERE (b.filename CONTAINS $binary_name OR b.hash = $binary_name)
+            WITH node, score,
+                 collect(DISTINCT b.filename) AS binary_filenames,
+                 collect(DISTINCT substring(b.hash, 0, 12)) AS binary_hashes,
+                 count(DISTINCT b) AS sample_count
+            RETURN node AS s,
+                   score AS score,
+                   sample_count AS sample_count,
+                   binary_filenames[0..$binary_limit] AS binary_filenames,
+                   binary_hashes[0..$binary_limit] AS binary_hashes
+            ORDER BY score DESC
         "
         } else {
             "
             CALL db.index.fulltext.queryNodes('string_value_fulltext', $query) YIELD node, score
-            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
-            RETURN node AS s, score AS score, count(DISTINCT b) AS sample_count
+            WITH node, score
             ORDER BY score DESC
             LIMIT $limit
+            MATCH (b:Binary)-[:CONTAINS_STRING]->(node)
+            WITH node, score,
+                 collect(DISTINCT b.filename) AS binary_filenames,
+                 collect(DISTINCT substring(b.hash, 0, 12)) AS binary_hashes,
+                 count(DISTINCT b) AS sample_count
+            RETURN node AS s,
+                   score AS score,
+                   sample_count AS sample_count,
+                   binary_filenames[0..$binary_limit] AS binary_filenames,
+                   binary_hashes[0..$binary_limit] AS binary_hashes
+            ORDER BY score DESC
         "
         };
 
         let mut query_builder = query(query_str)
             .param("query", lucene_query)
-            .param("limit", limit as i64);
+            .param("limit", limit as i64)
+            .param("binary_limit", binary_limit as i64);
         if let Some(binary_name) = binary {
             query_builder = query_builder.param("binary_name", binary_name);
         }
@@ -416,12 +438,18 @@ impl GraphImporter {
             let value = node.get::<String>("value").unwrap_or_default();
             let score = row.get::<f64>("score").unwrap_or(0.0);
             let sample_count = row.get::<i64>("sample_count").unwrap_or(0);
+            let binary_filenames = row
+                .get::<Vec<String>>("binary_filenames")
+                .unwrap_or_default();
+            let binary_hashes = row.get::<Vec<String>>("binary_hashes").unwrap_or_default();
 
             hits.push(StringSearchHit {
                 uid,
                 value,
                 score,
                 sample_count,
+                binary_filenames,
+                binary_hashes,
             });
         }
 

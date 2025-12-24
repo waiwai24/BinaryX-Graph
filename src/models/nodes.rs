@@ -125,6 +125,8 @@ pub struct StringSearchHit {
     pub value: String,
     pub score: f64,
     pub sample_count: i64,
+    pub binary_filenames: Vec<String>,
+    pub binary_hashes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

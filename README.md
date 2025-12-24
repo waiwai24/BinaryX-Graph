@@ -88,6 +88,9 @@ Create configuration file `config.json`:
 # Fulltext search with raw Lucene query syntax
 ./binaryx -c config.json query strings --pattern "ransom* AND (bitcoin OR wallet)" --raw
 
+# Phrase query example
+./binaryx -c config.json query strings --pattern "\"Pay Bitcoin\"" --raw
+
 # Search strings in a specific binary
 ./binaryx -c config.json query strings --pattern "password" --binary "malware.exe"
 

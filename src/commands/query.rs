@@ -223,17 +223,44 @@ async fn query_strings(
         println!("{}", json);
     } else {
         println!("\nStrings ({} found):", hits.len());
-        println!("{:<10} {:<10} {}", "Score", "Samples", "Value");
+        println!(
+            "{:<10} {:<10} {:<25} {:<10}",
+            "Score", "Samples", "Binaries", "Value"
+        );
         println!("{}", "-".repeat(80));
 
         for hit in &hits {
             let value = hit.value.replace('\n', "\\n").replace('\r', "\\r");
             let display = if value.len() > 60 {
-                format!("{}...", &value[..60])
+                let truncated = &value[..60];
+                if let Some(space_pos) = truncated.rfind(' ') {
+                    format!("{}...", &truncated[..space_pos])
+                } else {
+                    format!("{}...", truncated)
+                }
             } else {
                 value
             };
-            println!("{:<10.4} {:<10} {}", hit.score, hit.sample_count, display);
+
+            let binaries = if hit.binary_filenames.is_empty() {
+                "N/A".to_string()
+            } else {
+                hit.binary_filenames.join(", ")
+            };
+            let binaries = if binaries.len() > 25 {
+                if let Some(comma_pos) = binaries[..25].rfind(',') {
+                    format!("{}...", &binaries[..comma_pos])
+                } else {
+                    format!("{}...", &binaries[..25])
+                }
+            } else {
+                binaries
+            };
+
+            println!(
+                "{:<10.4} {:<10} {:<25} {}",
+                hit.score, hit.sample_count, binaries, display
+            );
         }
 
         if !raw {

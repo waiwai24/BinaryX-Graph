@@ -49,6 +49,8 @@ impl SchemaManager {
             "CREATE INDEX string_value_index IF NOT EXISTS FOR (s:String) ON (s.value)",
             // Fulltext indexes (for substring/keyword search)
             "CREATE FULLTEXT INDEX string_value_fulltext IF NOT EXISTS FOR (s:String) ON EACH [s.value]",
+            // Backward-compatible fallback for older Neo4j versions (safe to ignore if unsupported/already exists)
+            "CALL db.index.fulltext.createNodeIndex('string_value_fulltext', ['String'], ['value'])",
         ];
 
         for index in indexes {
