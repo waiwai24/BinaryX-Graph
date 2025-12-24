@@ -1,0 +1,37 @@
+[package]
+name = "binaryx-graph"
+version = "0.1.0"
+edition = "2021"
+authors = ["BinaryX Team"]
+description = "Binary analysis data importer for Neo4j graph database"
+license = "MIT"
+repository = "https://github.com/BinaryXCorp/BinaryX-Graph"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive"] }
+neo4rs = "0.8.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.147"
+tokio = { version = "1.48.0", features = ["full"] }
+toml = "0.9.10"
+uuid = { version = "1.19.0", features = ["v4"] }
+walkdir = "2.5.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.10"
+
+[[bin]]
+name = "binaryx"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = true

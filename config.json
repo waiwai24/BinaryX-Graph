@@ -1,0 +1,7 @@
+{
+    "neo4j_uri": "neo4j://127.0.0.1:7687",
+    "neo4j_user": "neo4j",
+    "neo4j_password": "pass",
+    "neo4j_database": "neo4j",
+    "batch_size": 1000
+}
